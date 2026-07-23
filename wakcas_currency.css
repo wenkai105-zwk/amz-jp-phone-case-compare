@@ -1,0 +1,32 @@
+.setting select {
+  width: 92px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 7px;
+  border: 1px solid #b9c7d9;
+  border-radius: 7px;
+  background: #fff;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.compact-line.input {
+  grid-template-columns: minmax(0, 1fr) 74px auto;
+}
+
+.mini-input {
+  width: 74px;
+  min-width: 74px;
+}
+
+@media (max-width: 640px) {
+  .compact-line.input {
+    grid-template-columns: minmax(0, 1fr) 68px auto;
+  }
+
+  .mini-input {
+    width: 68px;
+    min-width: 68px;
+  }
+}
