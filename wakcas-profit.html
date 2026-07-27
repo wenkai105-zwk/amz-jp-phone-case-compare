@@ -1,10 +1,10 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>WAKCAS 独立站纯手机壳横向对比</title>
-<link rel="stylesheet" href="wakcas_profit_calculator.css">
+<link rel="stylesheet" href="wakcas_profit_calculator.css?v=20260727-2">
 <link rel="stylesheet" href="wakcas_profit_clear.css">
 <link rel="stylesheet" href="wakcas_currency.css">
-<link rel="stylesheet" href="mobile-report.css">
+<link rel="stylesheet" href="/mobile-report.css">
 <style>
 :root{--blue:#dceafb;--line:#c8d5e5;--ink:#172033;--muted:#64748b;--yellow:#ffe56a}
 *{box-sizing:border-box}html,body{margin:0;background:#f6f8fb;color:var(--ink);font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC",sans-serif}
@@ -46,5 +46,5 @@ function apply(){let shown=0;data.forEach(d=>{const okQ=!q.value||d.search.inclu
 [q,mag,stand,minp,maxp].forEach(x=>x.addEventListener('input',apply));document.getElementById('filterBtn').onclick=()=>{filters.classList.toggle('open');filterBtn.textContent=filters.classList.contains('open')?'隐藏筛选':'显示筛选'};
 document.getElementById('reset').onclick=()=>{[q,mag,stand,minp,maxp].forEach(x=>x.value='');filters.classList.remove('open');filterBtn.textContent='显示筛选';apply()};apply();
 </script>
-<script src="wakcas_profit_calculator.js"></script>
+<script src="wakcas_profit_calculator.js?v=20260727-2"></script>
 </body></html>
