@@ -1,4 +1,4 @@
-(() => {
+(async() => {
   const table=document.querySelector(".table-wrap table"),tbody=table?.tBodies?.[0],count=table?.tHead?.rows?.[0]?.cells?.length-1;
   if(!tbody||!count||document.querySelector(".profit-section-row"))return;
   const fixed={currency:"USD",priceCurrency:"USD",cnyPerUsd:7,jpyPerUsd:160,commissionRate:10.4,couponUsd:.9375,operatorRate:0,jctRate:10};
@@ -17,17 +17,31 @@
     payload.s.slice(0,count).forEach((values,i)=>stateKeys.forEach((k,j)=>{if(values?.[j]!==undefined)states[i][k]=values[j]}));
     if(Array.isArray(payload.b))bulkKeys.forEach((k,i)=>{if(payload.b[i]!==undefined)bulkDrafts[k]=payload.b[i]});
   };
-  const encodeShare=payload=>btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(payload)))).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");
-  const decodeShare=value=>{
+  const toBase64Url=bytes=>btoa(String.fromCharCode(...bytes)).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");
+  const fromBase64Url=value=>{
     const normalized=value.replaceAll("-","+").replaceAll("_","/");
-    const bytes=Uint8Array.from(atob(normalized+"=".repeat((4-normalized.length%4)%4)),c=>c.charCodeAt(0));
+    return Uint8Array.from(atob(normalized+"=".repeat((4-normalized.length%4)%4)),c=>c.charCodeAt(0));
+  };
+  const encodeShare=async payload=>{
+    const input=new TextEncoder().encode(JSON.stringify(payload));
+    if(typeof CompressionStream==="undefined")return{key:"p",value:toBase64Url(input)};
+    const stream=new Blob([input]).stream().pipeThrough(new CompressionStream("gzip"));
+    return{key:"z",value:toBase64Url(new Uint8Array(await new Response(stream).arrayBuffer()))};
+  };
+  const decodeShare=async(value,compressed=false)=>{
+    let bytes=fromBase64Url(value);
+    if(compressed){
+      if(typeof DecompressionStream==="undefined")throw new Error("当前浏览器不支持压缩分享数据");
+      const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
+      bytes=new Uint8Array(await new Response(stream).arrayBuffer());
+    }
     return JSON.parse(new TextDecoder().decode(bytes));
   };
   const defaultState=compactState();
   let loadedFromShare=false;
   try{
-    const shared=new URLSearchParams(location.hash.slice(1)).get("p");
-    if(shared){applyCompactState(decodeShare(shared));loadedFromShare=true}
+    const params=new URLSearchParams(location.hash.slice(1)),compressed=params.get("z"),plain=params.get("p"),shared=compressed||plain;
+    if(shared){applyCompactState(await decodeShare(shared,Boolean(compressed)));loadedFromShare=true}
     else{
       const saved=JSON.parse(localStorage.getItem(storageKey)||"null");
       if(saved?.fixed)Object.assign(fixed,saved.fixed);
@@ -54,13 +68,7 @@
 
   row("","profit-spacer-row");
   const global=row("统一参数设置","global-settings-row"),cell=global.cells[1];cell.colSpan=count;while(global.cells.length>2)global.deleteCell(2);
-  cell.innerHTML=`<div class="share-settings settings-block"><div class="settings-heading"><span class="settings-title">分享当前测算数据</span><span class="share-status" id="shareStatus">${loadedFromShare?"已载入分享数据":"当前数据仅保存在本机"}</span></div><div class="share-actions">
-    <button id="generateShareLink" class="share-primary" type="button">生成分享链接</button>
-    <button id="copyShareLink" type="button">复制分享链接</button>
-    <input id="shareLink" type="text" inputmode="url" placeholder="生成后显示网址；也可粘贴别人发来的分享网址">
-    <button id="importShareLink" type="button">导入分享数据</button>
-    <button id="restoreDefaults" class="clear-all" type="button">恢复网页默认值</button>
-  </div><div class="share-help">分享网址包含当前全部输入值。对方打开后会先看到你分享时的数字，之后的修改只保存在对方自己的浏览器。</div></div><div class="global-settings"><div class="settings-block"><span class="settings-title">固定参数 · 自动应用全部</span><div class="settings-grid">
+  cell.innerHTML=`<div class="global-settings"><div class="settings-block"><span class="settings-title">固定参数 · 自动应用全部</span><div class="settings-grid">
     <label class="setting"><span class="setting-title">计算币种</span><span class="setting-control"><select id="profitCurrency"><option value="USD">美元 USD</option><option value="CNY">人民币 CNY</option><option value="JPY">日元 JPY</option></select></span></label>
     <label class="setting"><span class="setting-title">销售价币种</span><span class="setting-control"><select id="saleCurrency"><option value="USD">美元 USD</option><option value="CNY">人民币 CNY</option><option value="JPY">日元 JPY</option></select></span></label>
     ${fixedBox("人民币汇率","cnyPerUsd",fixed.cnyPerUsd,"CNY/USD",".01")}
@@ -74,28 +82,6 @@
   </div></div></div>`;
   cell.querySelector("#profitCurrency").value=fixed.currency;
   cell.querySelector("#saleCurrency").value=fixed.priceCurrency;
-  const shareLinkInput=cell.querySelector("#shareLink"),shareStatus=cell.querySelector("#shareStatus");
-  const makeShareUrl=()=>{
-    const url=new URL(location.href);url.hash=`p=${encodeShare(compactState())}`;return url.toString();
-  };
-  cell.querySelector("#generateShareLink").addEventListener("click",()=>{
-    shareLinkInput.value=makeShareUrl();shareLinkInput.focus();shareLinkInput.select();shareStatus.textContent="分享链接已生成";
-  });
-  cell.querySelector("#copyShareLink").addEventListener("click",async()=>{
-    if(!shareLinkInput.value)shareLinkInput.value=makeShareUrl();
-    try{await navigator.clipboard.writeText(shareLinkInput.value);shareStatus.textContent="分享链接已复制"}
-    catch(_){shareLinkInput.focus();shareLinkInput.select();shareStatus.textContent="请手动复制已选中的链接"}
-  });
-  cell.querySelector("#importShareLink").addEventListener("click",()=>{
-    try{
-      const raw=shareLinkInput.value.trim(),url=new URL(raw||location.href),shared=new URLSearchParams(url.hash.slice(1)).get("p");
-      if(!shared)throw new Error();
-      applyCompactState(decodeShare(shared));persist();location.hash=`p=${shared}`;location.reload();
-    }catch(_){shareStatus.textContent="未识别到有效的分享数据"}
-  });
-  cell.querySelector("#restoreDefaults").addEventListener("click",()=>{
-    applyCompactState(defaultState);persist();history.replaceState(null,"",location.pathname+location.search);location.reload();
-  });
   cell.querySelectorAll("[data-bulk]").forEach(el=>el.addEventListener("input",()=>{bulkDrafts[el.dataset.bulk]=el.value===""?"":el.dataset.bulkMoney?toUsd(num(el.value)):num(el.value);persist()}));
   cell.querySelector("#profitCurrency").addEventListener("change",e=>{fixed.currency=e.target.value;refreshCurrencyInputs();renderAll();persist()});
   cell.querySelector("#saleCurrency").addEventListener("change",e=>{fixed.priceCurrency=e.target.value;refreshCurrencyInputs();renderAll();persist()});
@@ -149,6 +135,43 @@
   pair("工厂净收入","左：净利｜右：净利率；已扣代运营","factoryProfit","factoryRate",true);
   band("利润率倒推","profit-subsection-row");
   detail("利润率倒推","输入目标工厂净利率，输出建议含税售价",()=>line("目标",input("targetMargin","%","0.1"),"input")+line("建议售价",amount("reversePrice"),"reverse-result"),"reverse-row");
+  const shareRow=row("数据分享","profit-share-row"),shareCell=shareRow.cells[1];
+  shareCell.colSpan=count;
+  while(shareRow.cells.length>2)shareRow.deleteCell(2);
+  shareCell.innerHTML=`<div class="share-settings settings-block"><div class="settings-heading"><span class="settings-title">分享当前测算数据</span><span id="shareStatus" class="share-status"></span></div><div class="share-actions"><button id="generateShareLink" class="share-primary" type="button">生成分享链接</button><button id="copyShareLink" type="button">复制分享链接</button><input id="shareLink" type="text" readonly placeholder="点击生成分享链接"><button id="importShareLink" type="button">导入分享数据</button><button id="restoreDefaults" class="clear-all" type="button">恢复网页默认值</button></div><div class="share-help">分享网址包含当前全部输入值；对方打开后会先看到你分享的数字，之后的修改只保存在对方自己的浏览器。</div></div>`;
+  const shareLinkInput=shareCell.querySelector("#shareLink"),shareStatus=shareCell.querySelector("#shareStatus");
+  const makeShareUrl=async()=>{
+    const url=new URL(location.href),encoded=await encodeShare(compactState());
+    url.hash=`${encoded.key}=${encoded.value}`;
+    return url.toString();
+  };
+  shareCell.querySelector("#generateShareLink").addEventListener("click",async()=>{
+    shareLinkInput.value=await makeShareUrl();
+    shareStatus.textContent=`已生成压缩链接（${shareLinkInput.value.length} 字符）`;
+  });
+  shareCell.querySelector("#copyShareLink").addEventListener("click",async()=>{
+    if(!shareLinkInput.value)shareLinkInput.value=await makeShareUrl();
+    try{await navigator.clipboard.writeText(shareLinkInput.value);shareStatus.textContent="分享链接已复制"}
+    catch(_){shareLinkInput.select();document.execCommand("copy");shareStatus.textContent="分享链接已复制"}
+  });
+  shareCell.querySelector("#importShareLink").addEventListener("click",async()=>{
+    try{
+      const raw=shareLinkInput.value.trim();
+      if(!raw)throw new Error("请先粘贴分享链接");
+      const url=new URL(raw,location.href),params=new URLSearchParams(url.hash.slice(1)),compressed=params.get("z"),plain=params.get("p"),shared=compressed||plain;
+      if(!shared)throw new Error("链接中没有测算数据");
+      applyCompactState(await decodeShare(shared,Boolean(compressed)));
+      persist();
+      location.hash=`${compressed?"z":"p"}=${shared}`;
+      location.reload();
+    }catch(error){shareStatus.textContent=error?.message||"分享链接无法读取"}
+  });
+  shareCell.querySelector("#restoreDefaults").addEventListener("click",()=>{
+    localStorage.removeItem(storageKey);
+    history.replaceState(null,"",location.pathname+location.search);
+    location.reload();
+  });
+  if(loadedFromShare)shareStatus.textContent="已载入分享数据";
 
   function fixedBox(label,field,value,unit,step,disabled=false,isMoney=false){return `<label class="setting"><span class="setting-title">${label}</span><span class="setting-control"><input data-fixed="${field}" ${isMoney?'data-fixed-money="1"':""} type="number" min="0" step="${step}" value="${value}" ${disabled?"disabled":""}><span class="setting-unit" ${isMoney?'data-money-unit="1"':""}>${isMoney?fixed.currency:unit}</span></span></label>`}
   function bulk(label,field,unit){const isMoney=unit==="USD",savedValue=bulkDrafts[field]??"",displayValue=savedValue===""?"":(isMoney?fromUsd(num(savedValue)):num(savedValue)).toFixed(2);return `<label class="setting bulk-setting"><span class="setting-title">${label}<span data-bulk-unit-label>${isMoney?`（${fixed.currency}）`:`（${unit}）`}</span></span><span class="setting-control"><input data-bulk="${field}" ${isMoney?'data-bulk-money="1"':""} type="number" min="0" step="0.1" placeholder="留空" value="${displayValue}"></span><button class="clear-one" data-clear="${field}" type="button">清除</button><button class="apply-all" data-apply="${field}" type="button">应用全部</button></label>`}
