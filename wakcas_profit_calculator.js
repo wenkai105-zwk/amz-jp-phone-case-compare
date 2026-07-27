@@ -7,11 +7,33 @@
   const states=Array.from({length:count},(_,i)=>{const costCny=costCnyByProduct[i]??0,costUsd=costCny/fixed.cnyPerUsd;return{...base,costCny,costUsd,costJpy:costUsd*fixed.jpyPerUsd}});
   const bulkDrafts={fba:1.84,wh:0,refundRate:5,adRate:25,logistics:.03,targetMargin:10};
   const storageKey="wakcas-profit-calculator-v1";
+  const stateKeys=["saleUsd","fba","wh","refundRate","adRate","logistics","targetMargin","costCny","costUsd","costJpy"];
+  const fixedKeys=["currency","priceCurrency","cnyPerUsd","jpyPerUsd","commissionRate","couponUsd","operatorRate","jctRate"];
+  const bulkKeys=["fba","wh","refundRate","adRate","logistics","targetMargin"];
+  const compactState=()=>({v:1,f:fixedKeys.map(k=>fixed[k]),s:states.map(s=>stateKeys.map(k=>s[k])),b:bulkKeys.map(k=>bulkDrafts[k])});
+  const applyCompactState=payload=>{
+    if(payload?.v!==1||!Array.isArray(payload.f)||!Array.isArray(payload.s))throw new Error("无效的分享数据");
+    fixedKeys.forEach((k,i)=>{if(payload.f[i]!==undefined)fixed[k]=payload.f[i]});
+    payload.s.slice(0,count).forEach((values,i)=>stateKeys.forEach((k,j)=>{if(values?.[j]!==undefined)states[i][k]=values[j]}));
+    if(Array.isArray(payload.b))bulkKeys.forEach((k,i)=>{if(payload.b[i]!==undefined)bulkDrafts[k]=payload.b[i]});
+  };
+  const encodeShare=payload=>btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(payload)))).replaceAll("+","-").replaceAll("/","_").replaceAll("=","");
+  const decodeShare=value=>{
+    const normalized=value.replaceAll("-","+").replaceAll("_","/");
+    const bytes=Uint8Array.from(atob(normalized+"=".repeat((4-normalized.length%4)%4)),c=>c.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes));
+  };
+  const defaultState=compactState();
+  let loadedFromShare=false;
   try{
-    const saved=JSON.parse(localStorage.getItem(storageKey)||"null");
-    if(saved?.fixed)Object.assign(fixed,saved.fixed);
-    if(Array.isArray(saved?.states))saved.states.slice(0,count).forEach((value,i)=>Object.assign(states[i],value));
-    if(saved?.bulkDrafts)Object.assign(bulkDrafts,saved.bulkDrafts);
+    const shared=new URLSearchParams(location.hash.slice(1)).get("p");
+    if(shared){applyCompactState(decodeShare(shared));loadedFromShare=true}
+    else{
+      const saved=JSON.parse(localStorage.getItem(storageKey)||"null");
+      if(saved?.fixed)Object.assign(fixed,saved.fixed);
+      if(Array.isArray(saved?.states))saved.states.slice(0,count).forEach((value,i)=>Object.assign(states[i],value));
+      if(saved?.bulkDrafts)Object.assign(bulkDrafts,saved.bulkDrafts);
+    }
   }catch(_){}
   const num=v=>{const n=Number.parseFloat(v);return Number.isFinite(n)?n:0};
   const persist=()=>{try{localStorage.setItem(storageKey,JSON.stringify({fixed,states,bulkDrafts}))}catch(_){}};
@@ -32,7 +54,13 @@
 
   row("","profit-spacer-row");
   const global=row("统一参数设置","global-settings-row"),cell=global.cells[1];cell.colSpan=count;while(global.cells.length>2)global.deleteCell(2);
-  cell.innerHTML=`<div class="global-settings"><div class="settings-block"><span class="settings-title">固定参数 · 自动应用全部</span><div class="settings-grid">
+  cell.innerHTML=`<div class="share-settings settings-block"><div class="settings-heading"><span class="settings-title">分享当前测算数据</span><span class="share-status" id="shareStatus">${loadedFromShare?"已载入分享数据":"当前数据仅保存在本机"}</span></div><div class="share-actions">
+    <button id="generateShareLink" class="share-primary" type="button">生成分享链接</button>
+    <button id="copyShareLink" type="button">复制分享链接</button>
+    <input id="shareLink" type="text" inputmode="url" placeholder="生成后显示网址；也可粘贴别人发来的分享网址">
+    <button id="importShareLink" type="button">导入分享数据</button>
+    <button id="restoreDefaults" class="clear-all" type="button">恢复网页默认值</button>
+  </div><div class="share-help">分享网址包含当前全部输入值。对方打开后会先看到你分享时的数字，之后的修改只保存在对方自己的浏览器。</div></div><div class="global-settings"><div class="settings-block"><span class="settings-title">固定参数 · 自动应用全部</span><div class="settings-grid">
     <label class="setting"><span class="setting-title">计算币种</span><span class="setting-control"><select id="profitCurrency"><option value="USD">美元 USD</option><option value="CNY">人民币 CNY</option><option value="JPY">日元 JPY</option></select></span></label>
     <label class="setting"><span class="setting-title">销售价币种</span><span class="setting-control"><select id="saleCurrency"><option value="USD">美元 USD</option><option value="CNY">人民币 CNY</option><option value="JPY">日元 JPY</option></select></span></label>
     ${fixedBox("人民币汇率","cnyPerUsd",fixed.cnyPerUsd,"CNY/USD",".01")}
@@ -46,6 +74,28 @@
   </div></div></div>`;
   cell.querySelector("#profitCurrency").value=fixed.currency;
   cell.querySelector("#saleCurrency").value=fixed.priceCurrency;
+  const shareLinkInput=cell.querySelector("#shareLink"),shareStatus=cell.querySelector("#shareStatus");
+  const makeShareUrl=()=>{
+    const url=new URL(location.href);url.hash=`p=${encodeShare(compactState())}`;return url.toString();
+  };
+  cell.querySelector("#generateShareLink").addEventListener("click",()=>{
+    shareLinkInput.value=makeShareUrl();shareLinkInput.focus();shareLinkInput.select();shareStatus.textContent="分享链接已生成";
+  });
+  cell.querySelector("#copyShareLink").addEventListener("click",async()=>{
+    if(!shareLinkInput.value)shareLinkInput.value=makeShareUrl();
+    try{await navigator.clipboard.writeText(shareLinkInput.value);shareStatus.textContent="分享链接已复制"}
+    catch(_){shareLinkInput.focus();shareLinkInput.select();shareStatus.textContent="请手动复制已选中的链接"}
+  });
+  cell.querySelector("#importShareLink").addEventListener("click",()=>{
+    try{
+      const raw=shareLinkInput.value.trim(),url=new URL(raw||location.href),shared=new URLSearchParams(url.hash.slice(1)).get("p");
+      if(!shared)throw new Error();
+      applyCompactState(decodeShare(shared));persist();location.hash=`p=${shared}`;location.reload();
+    }catch(_){shareStatus.textContent="未识别到有效的分享数据"}
+  });
+  cell.querySelector("#restoreDefaults").addEventListener("click",()=>{
+    applyCompactState(defaultState);persist();history.replaceState(null,"",location.pathname+location.search);location.reload();
+  });
   cell.querySelectorAll("[data-bulk]").forEach(el=>el.addEventListener("input",()=>{bulkDrafts[el.dataset.bulk]=el.value===""?"":el.dataset.bulkMoney?toUsd(num(el.value)):num(el.value);persist()}));
   cell.querySelector("#profitCurrency").addEventListener("change",e=>{fixed.currency=e.target.value;refreshCurrencyInputs();renderAll();persist()});
   cell.querySelector("#saleCurrency").addEventListener("change",e=>{fixed.priceCurrency=e.target.value;refreshCurrencyInputs();renderAll();persist()});
@@ -108,5 +158,6 @@
   function format(key,v){if(key.endsWith("Rate")||key==="jctRate")return`${v.toFixed(2)}%`;if(v===null)return"未启用";if(!Number.isFinite(v))return"目标不可达";return key==="reversePrice"?priceMoney(v):money(v)}
   function render(i){let vals=calc(states[i]);if(states[i].targetMargin!==""&&Number.isFinite(vals.reversePrice)){states[i].saleUsd=vals.reversePrice;const saleInput=document.querySelector(`[data-profit-i="${i}"] input[data-field="saleUsd"]`);if(saleInput)saleInput.value=priceFromUsd(states[i].saleUsd).toFixed(2);vals=calc(states[i])}document.querySelectorAll(`[data-profit-i="${i}"] [data-output]`).forEach(out=>{const v=vals[out.dataset.output];out.textContent=format(out.dataset.output,v);out.classList.toggle("muted-result",v===null)});for(const left of["salesJct","commission","coupon","operatorFee","businessMargin","factoryProfit"]){const card=document.querySelector(`[data-pair="${left}"][data-index="${i}"]`);if(!card)continue;card.querySelectorAll("[data-pair-value]").forEach(out=>{const key=out.dataset.pairValue;out.textContent=format(key,vals[key])});if(["businessMargin","factoryProfit"].includes(left)){card.classList.toggle("positive",vals[left]>=0);card.classList.toggle("negative",vals[left]<0)}}}
   function renderAll(){states.forEach((_,i)=>render(i))}
+  if(loadedFromShare)persist();
   renderAll();
 })();
